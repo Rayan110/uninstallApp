@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Delete icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30
+                         L54,28
+                         C54,26.9 53.1,26 52,26
+                         L56,26
+                         C54.9,26 54,26.9 54,28
+                         L54,30
+                         L66,30
+                         C67.1,30 68,30.9 68,32
+                         L68,34
+                         L40,34
+                         L40,32
+                         C40,30.9 40.9,30 42,30
+                         L54,30
+                         Z
+                         M44,38
+                         L44,72
+                         C44,74.2 45.8,76 48,76
+                         L60,76
+                         C62.2,76 64,74.2 64,72
+                         L64,38
+                         L44,38
+                         Z
+                         M50,68
+                         L48,68
+                         L48,44
+                         L50,44
+                         L50,68
+                         Z
+                         M56,68
+                         L54,68
+                         L54,44
+                         L56,44
+                         L56,68
+                         Z
+                         M62,68
+                         L60,68
+                         L60,44
+                         L62,44
+                         L62,68
+                         Z"/>
+</vector>

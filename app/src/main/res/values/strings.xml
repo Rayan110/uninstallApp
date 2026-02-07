@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">应用卸载器</string>
+    <string name="accessibility_service_description">开启后，可自动点击卸载确认按钮，实现一键批量卸载。\n\n此服务仅用于自动确认卸载操作，不会收集任何个人信息。</string>
+</resources>
