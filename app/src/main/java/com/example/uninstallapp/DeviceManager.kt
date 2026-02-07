@@ -3,6 +3,7 @@ package com.example.uninstallapp
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import java.security.SecureRandom
 import java.util.UUID
 
 class DeviceManager(context: Context) {
@@ -29,7 +30,7 @@ class DeviceManager(context: Context) {
     fun getPairingCode(): String {
         var code = prefs.getString(KEY_PAIRING_CODE, null)
         if (code == null || !isPaired()) {
-            code = String.format("%06d", (Math.random() * 1000000).toInt())
+            code = String.format("%06d", SecureRandom().nextInt(1000000))
             prefs.edit().putString(KEY_PAIRING_CODE, code).apply()
         }
         return code

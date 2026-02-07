@@ -220,39 +220,66 @@ class MqttManager(
     }
 
     fun publishAppList() {
-        val deviceId = deviceManager.getDeviceId()
-        val topic = "$TOPIC_PREFIX/$deviceId/apps"
+        Thread {
+            val deviceId = deviceManager.getDeviceId()
+            val topic = "$TOPIC_PREFIX/$deviceId/apps"
 
-        val pm = context.packageManager
-        val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-        val whitelist = context.getSharedPreferences("whitelist_prefs", Context.MODE_PRIVATE)
-            .getStringSet("whitelist", emptySet()) ?: emptySet()
+            val pm = context.packageManager
+            val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            val whitelist = context.getSharedPreferences("whitelist_prefs", Context.MODE_PRIVATE)
+                .getStringSet("whitelist", emptySet()) ?: emptySet()
 
-        val apps = packages
-            .filter { it.packageName != context.packageName }
-            .map { appInfo ->
-                val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                val size = try {
-                    val file = java.io.File(appInfo.sourceDir)
-                    formatFileSize(file.length())
-                } catch (e: Exception) {
-                    "Unknown"
+            val apps = packages
+                .filter { it.packageName != context.packageName }
+                .map { appInfo ->
+                    val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                    val size = try {
+                        val file = java.io.File(appInfo.sourceDir)
+                        formatFileSize(file.length())
+                    } catch (e: Exception) {
+                        "Unknown"
+                    }
+                    mapOf(
+                        "name" to pm.getApplicationLabel(appInfo).toString(),
+                        "packageName" to appInfo.packageName,
+                        "size" to size,
+                        "isSystem" to isSystem,
+                        "isWhitelisted" to (isSystem || whitelist.contains(appInfo.packageName))
+                    )
                 }
-                mapOf(
-                    "name" to pm.getApplicationLabel(appInfo).toString(),
-                    "packageName" to appInfo.packageName,
-                    "size" to size,
-                    "isSystem" to isSystem,
-                    "isWhitelisted" to (isSystem || whitelist.contains(appInfo.packageName))
-                )
-            }
 
+            val payload = gson.toJson(mapOf(
+                "timestamp" to System.currentTimeMillis(),
+                "apps" to apps
+            ))
+
+            publish(topic, payload, qos = 1)
+        }.start()
+    }
+
+    fun publishCommandAck(command: String, status: String, detail: String = "") {
+        val deviceId = deviceManager.getDeviceId()
+        val topic = "$TOPIC_PREFIX/$deviceId/command/ack"
         val payload = gson.toJson(mapOf(
-            "timestamp" to System.currentTimeMillis(),
-            "apps" to apps
+            "command" to command,
+            "status" to status,
+            "detail" to detail,
+            "timestamp" to System.currentTimeMillis()
         ))
-
         publish(topic, payload, qos = 1)
+    }
+
+    fun publishUninstallProgress(current: Int, total: Int, appName: String, success: Boolean) {
+        val deviceId = deviceManager.getDeviceId()
+        val topic = "$TOPIC_PREFIX/$deviceId/uninstall/progress"
+        val payload = gson.toJson(mapOf(
+            "current" to current,
+            "total" to total,
+            "appName" to appName,
+            "success" to success,
+            "timestamp" to System.currentTimeMillis()
+        ))
+        publish(topic, payload, qos = 0)
     }
 
     fun publishWhitelist() {

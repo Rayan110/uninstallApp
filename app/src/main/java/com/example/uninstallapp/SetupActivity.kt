@@ -24,6 +24,11 @@ class SetupActivity : AppCompatActivity() {
     private var pairingCode: String = ""
     private val handler = Handler(Looper.getMainLooper())
     private var pairingCheckRunnable: Runnable? = null
+    private var pairingTimeoutRunnable: Runnable? = null
+    private companion object {
+        private const val PAIRING_CHECK_INTERVAL = 3000L // 3 seconds
+        private const val PAIRING_TIMEOUT = 120_000L // 2 minutes
+    }
 
     private val pairedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -91,6 +96,7 @@ class SetupActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopPairingCheck()
+        handler.removeCallbacksAndMessages(null)
         if (serviceBound) {
             mqttService?.getMqttManager()?.stopPairing(pairingCode)
             unbindService(serviceConnection)
@@ -108,21 +114,35 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun startPairingCheck() {
+        stopPairingCheck()
         pairingCheckRunnable = object : Runnable {
             override fun run() {
                 if (deviceManager.isPaired()) {
                     onPairingSuccess()
-                } else {
-                    handler.postDelayed(this, 1000)
+                } else if (!isDestroyed && !isFinishing) {
+                    handler.postDelayed(this, PAIRING_CHECK_INTERVAL)
                 }
             }
         }
-        handler.postDelayed(pairingCheckRunnable!!, 1000)
+        handler.postDelayed(pairingCheckRunnable!!, PAIRING_CHECK_INTERVAL)
+
+        // Set pairing timeout
+        pairingTimeoutRunnable = Runnable {
+            if (!deviceManager.isPaired() && !isDestroyed && !isFinishing) {
+                binding.tvConnectionStatus.text = "配对超时，请确认管理端已输入配对码"
+                binding.tvConnectionStatus.setTextColor(0xFFFF9800.toInt())
+                binding.progressPairing.visibility = View.GONE
+                // Continue checking but slower
+            }
+        }
+        handler.postDelayed(pairingTimeoutRunnable!!, PAIRING_TIMEOUT)
     }
 
     private fun stopPairingCheck() {
         pairingCheckRunnable?.let { handler.removeCallbacks(it) }
         pairingCheckRunnable = null
+        pairingTimeoutRunnable?.let { handler.removeCallbacks(it) }
+        pairingTimeoutRunnable = null
     }
 
     private fun onPairingSuccess() {

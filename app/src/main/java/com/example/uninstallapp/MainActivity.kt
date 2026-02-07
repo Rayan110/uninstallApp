@@ -220,13 +220,21 @@ class MainActivity : AppCompatActivity() {
     private var connectionCheckRunnable: Runnable? = null
 
     private fun startConnectionStatusCheck() {
+        stopConnectionStatusCheck()
         connectionCheckRunnable = object : Runnable {
             override fun run() {
-                updateConnectionStatus()
-                handler.postDelayed(this, 5000)
+                if (!isDestroyed && !isFinishing) {
+                    updateConnectionStatus()
+                    handler.postDelayed(this, 5000)
+                }
             }
         }
         handler.postDelayed(connectionCheckRunnable!!, 5000)
+    }
+
+    private fun stopConnectionStatusCheck() {
+        connectionCheckRunnable?.let { handler.removeCallbacks(it) }
+        connectionCheckRunnable = null
     }
 
     private fun updateUninstallModeStatus() {
@@ -294,7 +302,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        connectionCheckRunnable?.let { handler.removeCallbacks(it) }
+        stopConnectionStatusCheck()
+        handler.removeCallbacksAndMessages(null)
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
@@ -344,24 +353,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateStats() {
-        val whitelist = getWhitelist()
-        val userApps = getUserAppPackages()
+        Thread {
+            val whitelist = getWhitelist()
+            val userApps = getUserAppPackages()
+            val toUninstallCount = userApps.count { !whitelist.contains(it) }
+            val whitelistCount = userApps.size - toUninstallCount
 
-        val toUninstallCount = userApps.count { !whitelist.contains(it) }
-        val whitelistCount = userApps.size - toUninstallCount
+            if (!isDestroyed && !isFinishing) {
+                runOnUiThread {
+                    binding.tvUninstallCount.text = toUninstallCount.toString()
+                    binding.tvWhitelistCount.text = whitelistCount.toString()
 
-        binding.tvUninstallCount.text = toUninstallCount.toString()
-        binding.tvWhitelistCount.text = whitelistCount.toString()
-
-        if (toUninstallCount > 0) {
-            binding.btnUninstallAll.isEnabled = true
-            binding.btnUninstallAll.text = "一键卸载 ($toUninstallCount 个)"
-            binding.btnUninstallAll.alpha = 1f
-        } else {
-            binding.btnUninstallAll.isEnabled = false
-            binding.btnUninstallAll.text = "一键卸载 (请先设置白名单)"
-            binding.btnUninstallAll.alpha = 0.5f
-        }
+                    if (toUninstallCount > 0) {
+                        binding.btnUninstallAll.isEnabled = true
+                        binding.btnUninstallAll.text = "一键卸载 ($toUninstallCount 个)"
+                        binding.btnUninstallAll.alpha = 1f
+                    } else {
+                        binding.btnUninstallAll.isEnabled = false
+                        binding.btnUninstallAll.text = "一键卸载 (请先设置白名单)"
+                        binding.btnUninstallAll.alpha = 0.5f
+                    }
+                }
+            }
+        }.start()
     }
 
     private fun getUserAppPackages(): List<String> {
@@ -379,7 +393,7 @@ class MainActivity : AppCompatActivity() {
     fun startBatchUninstall() {
         // Prefer Shizuku for silent uninstall
         if (shizukuUninstaller.isAvailable() && shizukuUninstaller.isPermissionGranted()) {
-            startShizukuUninstall()
+            confirmAndStartShizukuUninstall()
             return
         }
 
@@ -387,17 +401,39 @@ class MainActivity : AppCompatActivity() {
         startAccessibilityUninstall()
     }
 
-    private fun startShizukuUninstall() {
+    private fun confirmAndStartShizukuUninstall() {
         val packages = shizukuUninstaller.getPackagesToUninstall()
         if (packages.isEmpty()) {
             Toast.makeText(this, "没有需要卸载的应用", Toast.LENGTH_SHORT).show()
             return
         }
 
+        // Build preview list (show up to 10 app names)
+        val pm = packageManager
+        val appNames = packages.take(10).map { pkg ->
+            try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }
+            catch (_: Exception) { pkg }
+        }
+        val preview = appNames.joinToString("\n") { "  • $it" }
+        val moreText = if (packages.size > 10) "\n  ... 等 ${packages.size - 10} 个应用" else ""
+
+        AlertDialog.Builder(this)
+            .setTitle("确认卸载")
+            .setMessage("即将静默卸载 ${packages.size} 个应用：\n\n$preview$moreText\n\n此操作不可撤销，确定继续？")
+            .setPositiveButton("确定卸载") { _, _ ->
+                startShizukuUninstall(packages)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun startShizukuUninstall(packages: List<String>) {
         isUninstalling = true
         binding.progressContainer.visibility = View.VISIBLE
         binding.tvProgress.text = "准备静默卸载 ${packages.size} 个应用..."
         binding.btnUninstallAll.isEnabled = false
+
+        val failedApps = mutableListOf<String>()
 
         mqttService?.getMqttManager()?.publishStatus()
 
@@ -407,15 +443,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onResult(packageName: String, success: Boolean, message: String) {
-                // Progress already updated
+                if (!success) failedApps.add(message)
             }
 
             override fun onComplete(successCount: Int, failCount: Int) {
                 isUninstalling = false
                 binding.progressContainer.visibility = View.GONE
                 binding.btnUninstallAll.isEnabled = true
-                Toast.makeText(this@MainActivity,
-                    "卸载完成: $successCount 成功, $failCount 失败", Toast.LENGTH_SHORT).show()
                 updateStats()
 
                 if (serviceBound) {
@@ -423,6 +457,19 @@ class MainActivity : AppCompatActivity() {
                         publishStatus()
                         publishAppList()
                     }
+                }
+
+                // Show result dialog with details
+                if (failCount > 0) {
+                    val failList = failedApps.joinToString("\n") { "  • $it" }
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("卸载完成")
+                        .setMessage("成功: $successCount\n失败: $failCount\n\n失败列表：\n$failList")
+                        .setPositiveButton("确定", null)
+                        .show()
+                } else {
+                    Toast.makeText(this@MainActivity,
+                        "全部卸载成功: $successCount 个", Toast.LENGTH_SHORT).show()
                 }
             }
         })

@@ -80,10 +80,16 @@ class MqttService : Service() {
             override fun onWhitelistReceived(packages: List<String>) {
                 Log.d(TAG, "Whitelist received: ${packages.size} packages")
                 sendBroadcast(Intent("com.example.uninstallapp.WHITELIST_UPDATED").setPackage(packageName))
+                // Notify user that whitelist was remotely updated
+                updateNotification("白名单已被远程更新 (${packages.size} 个)")
+                handler.postDelayed({ updateNotification("远程管理已连接") }, 5000)
             }
 
             override fun onCommandReceived(command: String) {
                 Log.d(TAG, "Command received: $command")
+                // Send ACK immediately
+                mqttManager.publishCommandAck(command, "received")
+
                 when (command) {
                     "uninstall" -> {
                         val shizuku = ShizukuUninstaller(this@MqttService)
@@ -91,25 +97,31 @@ class MqttService : Service() {
                             val packages = shizuku.getPackagesToUninstall()
                             if (packages.isNotEmpty()) {
                                 Log.d(TAG, "Shizuku silent uninstall: ${packages.size} packages")
+                                mqttManager.publishCommandAck(command, "started", "${packages.size} packages")
                                 shizuku.uninstallPackages(packages, object : ShizukuUninstaller.UninstallCallback {
                                     override fun onProgress(packageName: String, appName: String, current: Int, total: Int) {
                                         Log.d(TAG, "Uninstalling $current/$total: $appName")
+                                        mqttManager.publishUninstallProgress(current, total, appName, true)
                                     }
                                     override fun onResult(packageName: String, success: Boolean, message: String) {
                                         Log.d(TAG, message)
                                     }
                                     override fun onComplete(successCount: Int, failCount: Int) {
                                         Log.d(TAG, "Uninstall done: $successCount ok, $failCount failed")
+                                        mqttManager.publishCommandAck(command, "completed",
+                                            "success=$successCount, failed=$failCount")
                                         mqttManager.publishStatus()
                                         mqttManager.publishAppList()
                                     }
                                 })
                             } else {
                                 Log.d(TAG, "No packages to uninstall")
+                                mqttManager.publishCommandAck(command, "completed", "No packages to uninstall")
                             }
                         } else {
                             // Fallback: launch activity for accessibility-based uninstall
                             Log.d(TAG, "Shizuku not available, falling back to accessibility")
+                            mqttManager.publishCommandAck(command, "fallback", "Shizuku not available, using accessibility")
                             val intent = Intent(this@MqttService, MainActivity::class.java).apply {
                                 action = ACTION_UNINSTALL
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -121,10 +133,12 @@ class MqttService : Service() {
                         mqttManager.publishAppList()
                         mqttManager.publishWhitelist()
                         mqttManager.publishStatus()
+                        mqttManager.publishCommandAck(command, "completed")
                     }
                     "unpair" -> {
                         deviceManager.clearPairedStatus()
                         sendBroadcast(Intent("com.example.uninstallapp.UNPAIRED").setPackage(packageName))
+                        mqttManager.publishCommandAck(command, "completed")
                     }
                 }
             }
