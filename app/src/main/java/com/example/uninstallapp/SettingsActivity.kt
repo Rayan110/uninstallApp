@@ -73,18 +73,16 @@ class SettingsActivity : AppCompatActivity() {
             if (appInfo.packageName == packageName) continue
 
             val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            // 只显示用户应用（可卸载的），跳过系统应用
+            if (isSystem) continue
+
             val name = pm.getApplicationLabel(appInfo).toString()
             val icon = pm.getApplicationIcon(appInfo)
             val size = getAppSize(appInfo.packageName)
             val sizeBytes = getAppSizeBytes(appInfo.packageName)
 
-            // 系统应用默认勾选（白名单），用户应用看SharedPreferences
-            val isWhitelisted = if (isSystem) {
-                true
-            } else {
-                whitelist.contains(appInfo.packageName) ||
-                    !prefs.contains(KEY_WHITELIST) // 首次使用，全部默认保留
-            }
+            val isWhitelisted = whitelist.contains(appInfo.packageName) ||
+                !prefs.contains(KEY_WHITELIST) // 首次使用，全部默认保留
 
             appList.add(
                 AppInfo(
@@ -94,13 +92,13 @@ class SettingsActivity : AppCompatActivity() {
                     size = size,
                     sizeBytes = sizeBytes,
                     isWhitelisted = isWhitelisted,
-                    isSystemApp = isSystem
+                    isSystemApp = false
                 )
             )
         }
 
-        // 排序：用户应用在前，系统应用在后；各自按名称排序
-        appList.sortWith(compareBy<AppInfo> { it.isSystemApp }.thenBy { it.name.lowercase() })
+        // 按名称排序
+        appList.sortBy { it.name.lowercase() }
 
         // 如果是首次使用，将所有用户应用添加到白名单
         if (!prefs.contains(KEY_WHITELIST)) {
@@ -149,10 +147,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun updateStats() {
-        val userApps = appList.filter { !it.isSystemApp }
         val totalCount = appList.size
         val whitelist = getWhitelist()
-        val toUninstallCount = userApps.count { !whitelist.contains(it.packageName) }
+        val toUninstallCount = appList.count { !whitelist.contains(it.packageName) }
         val whitelistCount = totalCount - toUninstallCount
 
         binding.tvTotalCount.text = totalCount.toString()

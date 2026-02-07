@@ -6,7 +6,7 @@ Android 批量卸载工具，支持 MQTT 远程管理和 Shizuku 静默卸载。
 
 - **批量卸载**: 一键卸载非白名单的第三方应用
 - **白名单管理**: 设置需要保留的应用，防止误卸载
-- **Shizuku 静默卸载**: 通过 Shizuku 获取 ADB 权限，无需手动确认即可卸载
+- **Shizuku 静默卸载**: 通过 Shizuku 获取 ADB 权限，无需手动确认即可卸载（兼容 Android 16）
 - **无障碍模式(备用)**: 自动点击确认按钮完成卸载
 - **MQTT 远程管理**: 通过 Web 管理端远程查看设备状态、应用列表、设置白名单、触发卸载
 - **配对机制**: 6位数字配对码，安全连接设备与管理端
@@ -43,8 +43,8 @@ app/src/main/
 │   ├── MqttManager.kt           # MQTT 连接与通信
 │   ├── MqttService.kt           # 前台服务 (保持MQTT连接、处理远程指令)
 │   ├── DeviceManager.kt         # 设备ID与配对状态管理
-│   ├── ShizukuUninstaller.kt    # Shizuku 静默卸载 (User Service)
-│   ├── UserService.kt           # Shizuku AIDL 服务实现
+│   ├── ShizukuUninstaller.kt    # Shizuku 静默卸载 (newProcess 反射调用)
+│   ├── UserService.kt           # Shizuku AIDL 服务实现 (备用)
 │   ├── AutoClickService.kt      # 无障碍自动点击 (备用)
 │   ├── AppListAdapter.kt        # 应用列表适配器
 │   └── AppInfo.kt               # 应用信息数据类
@@ -79,6 +79,16 @@ Web 管理端部署在 GitHub Pages:
 - 仓库: [HL946067429.github.io](https://github.com/HL946067429/HL946067429.github.io)
 - 路径: `.vuepress/public/uninstall/index.html`
 - 访问: `https://hl946067429.github.io/uninstall/`
+
+## 更新日志
+
+### Android 16 兼容性修复
+- **ShizukuUninstaller**: 将 `bindUserService()` 替换为 `Shizuku.newProcess()` 反射调用，解决 Android 16 SELinux 策略阻止 shell 上下文加载 APK 的问题
+- **SettingsActivity**: 白名单管理仅显示用户应用（可卸载），不再展示系统应用
+
+### Web 管理端优化
+- 应用列表仅显示用户应用，过滤系统应用
+- 配对码输入优化：输入每位数字后自动跳转下一格，6位输完自动收起键盘，支持粘贴
 
 ## Shizuku 配置
 

@@ -1,23 +1,19 @@
 package com.example.uninstallapp
 
-import android.content.ComponentName
 import android.content.Context
-import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import rikka.shizuku.Shizuku
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 class ShizukuUninstaller(private val context: Context) {
 
     companion object {
         private const val TAG = "ShizukuUninstaller"
         const val REQUEST_CODE = 1001
+        private val VALID_PACKAGE = Regex("""^[a-zA-Z][a-zA-Z0-9._]*$""")
     }
 
     interface UninstallCallback {
@@ -64,43 +60,41 @@ class ShizukuUninstaller(private val context: Context) {
             .map { it.packageName }
     }
 
+    /**
+     * Execute a shell command via Shizuku.newProcess() using reflection.
+     * This avoids bindUserService which fails on Android 16 due to SELinux
+     * blocking shell context from loading app APKs.
+     * newProcess is @RestrictTo(LIBRARY_GROUP_PREFIX) so we use reflection.
+     */
+    private fun execShellCommand(command: String): Pair<Int, String> {
+        return try {
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(
+                null,
+                arrayOf("sh", "-c", command),
+                null,
+                null
+            ) as Process
+            val output = process.inputStream.bufferedReader().readText()
+            val error = process.errorStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+            Pair(exitCode, "$output$error".trim())
+        } catch (e: Exception) {
+            Log.e(TAG, "execShellCommand failed: $command", e)
+            Pair(-1, e.message ?: "Unknown error")
+        }
+    }
+
     fun uninstallPackages(packages: List<String>, callback: UninstallCallback?) {
         val mainHandler = Handler(Looper.getMainLooper())
 
         Thread {
-            // Bind user service
-            val latch = CountDownLatch(1)
-            var service: IUserService? = null
-
-            val conn = object : ServiceConnection {
-                override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                    service = IUserService.Stub.asInterface(binder)
-                    latch.countDown()
-                }
-                override fun onServiceDisconnected(name: ComponentName?) {
-                    service = null
-                }
-            }
-
-            val args = Shizuku.UserServiceArgs(
-                ComponentName(context.packageName, UserService::class.java.name)
-            ).daemon(false).processNameSuffix("uninstall").version(1)
-
-            try {
-                mainHandler.post { Shizuku.bindUserService(args, conn) }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to bind Shizuku service", e)
-                mainHandler.post { callback?.onComplete(0, packages.size) }
-                return@Thread
-            }
-
-            if (!latch.await(10, TimeUnit.SECONDS)) {
-                Log.e(TAG, "Timeout waiting for Shizuku service")
-                mainHandler.post { callback?.onComplete(0, packages.size) }
-                return@Thread
-            }
-
-            // Execute uninstalls
             var successCount = 0
             var failCount = 0
             val pm = context.packageManager
@@ -116,14 +110,16 @@ class ShizukuUninstaller(private val context: Context) {
                     callback?.onProgress(pkg, appName, index + 1, packages.size)
                 }
 
-                val result = try {
-                    val output = service?.execCommand("pm uninstall --user 0 $pkg") ?: "-1\nService null"
-                    Log.d(TAG, "Uninstall $pkg: $output")
-                    output.startsWith("0") && output.contains("Success")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to uninstall $pkg", e)
-                    false
+                if (!VALID_PACKAGE.matches(pkg)) {
+                    Log.e(TAG, "Invalid package name: $pkg")
+                    failCount++
+                    mainHandler.post { callback?.onResult(pkg, false, "$appName 包名无效") }
+                    continue
                 }
+
+                val (exitCode, output) = execShellCommand("pm uninstall --user 0 $pkg")
+                val result = exitCode == 0 && output.contains("Success")
+                Log.d(TAG, "Uninstall $pkg: exitCode=$exitCode, output=$output")
 
                 if (result) {
                     successCount++
@@ -135,11 +131,6 @@ class ShizukuUninstaller(private val context: Context) {
 
                 Thread.sleep(200)
             }
-
-            // Unbind service
-            try {
-                mainHandler.post { Shizuku.unbindUserService(args, conn, true) }
-            } catch (_: Exception) {}
 
             val s = successCount
             val f = failCount
